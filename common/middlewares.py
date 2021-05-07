@@ -7,8 +7,14 @@
 
 from scrapy import signals
 import random
-from agents import AGENTS
+# from agents import AGENTS
+# import agents
 import json
+import importlib
+
+AGENTS=["Mozilla/5.0 (X11; Linux x86_64; rv:27.0) Gecko/20100101 Firefox/27.0"]
+# agents = input('agents')
+# importlib.import_module(agents)
 
 class ProxyMiddleware(object):
     def __init__(self):

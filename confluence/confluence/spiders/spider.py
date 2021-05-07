@@ -4,66 +4,130 @@ import scrapy
 from scrapy import Request, FormRequest
 from confluence.items import *
 import time
-import urlparse
+import urllib.parse
 import logging
+import scrapy_splash
+import base64
 
-# script = """
-# function main(splash)
-#   splash:init_cookies(splash.args.cookies)
-#   assert(splash:go{
-#     splash.args.url,
-#     headers=splash.args.headers,
-#     http_method=splash.args.http_method,
-#     body=splash.args.body,
-#     })
-#   assert(splash:wait(0.5))
+script = """
+function main(splash)
+  splash:add_cookie{"JSESSIONID", "46C83638D0C86B696B3063C55B37628C", "/wiki", domain='stl.woobest.com'}
+  assert(splash:go{
+    splash.args.url,
+    --headers=splash.args.headers,
+    --http_method=splash.args.http_method,
+    --body=splash.args.body,
+    })
+  assert(splash:wait(0.5))
 
-#   local entries = splash:history()
-#   local last_response = entries[#entries].response
-#   return {
-#     url = splash:url(),
-#     headers = last_response.headers,
-#     http_status = last_response.status,
-#     cookies = {
-#       'JSESSIONID': '',
-#       'doc-sidebar': '300px'
-#     },
-#     html = splash:html(),
-#   }
-# end
-# """
+  local entries = splash:history()
+  local last_response = entries[#entries].response
+  return splash:html()
+end
+"""
+
+script_img = """
+function main(splash)
+  splash:add_cookie{"JSESSIONID", "46C83638D0C86B696B3063C55B37628C", "/wiki", domain='stl.woobest.com'}
+  assert(splash:go{
+    splash.args.url,
+    --headers=splash.args.headers,
+    --http_method=splash.args.http_method,
+    --body=splash.args.body,
+    })
+  assert(splash:wait(0.5))
+
+  local entries = splash:history()
+  local last_response = entries[#entries].response
+  return { png = splash:png() }
+end
+"""
 
 class confluenceSpider(scrapy.Spider):
   name = "confluence"
-  allowed_domains = ["", ""]
+  allowed_domains = ["stl.woobest.com"]
   download_delay = 2
   start_urls = [
-        '',
+        'https://stl.woobest.com/wiki/pages/viewpage.action?pageId=69046880',
+        # 'https://stl.woobest.com/wiki/pages/viewpage.action?pageId=69057617',
   ]
-  base_url = ''
-  sub_url = '/plugins/pagetree/naturalchildren.action?decorator=none&excerpt=false&sort=position&reverse=false&disableLinks=false&hasRoot=true&treeId=0&startDepth=0'
+  base_url = 'https://stl.woobest.com'
+  sub_url = '/wiki/plugins/pagetree/naturalchildren.action?decorator=none&excerpt=false&sort=position&reverse=false&disableLinks=false&expandCurrent=true&hasRoot=true&treeId=0&startDepth=0'
   cookies = {
-    'JSESSIONID': '',
+    'JSESSIONID': '46C83638D0C86B696B3063C55B37628C',
+    # 'seraph.confluence': '90081919%3Af97fbcc80bac99ec4034de9a6dfbdb930e9cdcf2',
     'doc-sidebar': '300px'
   }
 
   def start_requests(self):  
     for url in self.start_urls:          
-      yield Request(url, cookies=self.cookies) 
+      yield scrapy_splash.SplashRequest(url, self.sub_space, args={
+            # optional; parameters passed to Splash HTTP API
+            'wait': 0.5,
+            'lua_source': script,
 
-  def parse(self, response):
+            # 'url' is prefilled from request url
+            # 'http_method' is set to 'POST' for POST requests
+            # 'body' is set to request body for POST requests
+        },
+        endpoint='execute', # optional; default is render.html
+        splash_url='http://127.0.0.1:8050' ,     # optional; overrides SPLASH_URL
+        slot_policy=scrapy_splash.SlotPolicy.PER_DOMAIN,  # optional
+      )
+      # yield Request(url, cookies=self.cookies, meta={
+      #   'splash': {
+      #       'args': {
+      #           # set rendering arguments here
+      #           'html': 1,
+      #           'png': 1,
+      #           'http_method': 'GET',
+
+      #           # 'url' is prefilled from request url
+      #           # 'http_method' is set to 'POST' for POST requests
+      #           # 'body' is set to request body for POST requests
+      #       },
+
+      #       # optional parameters
+      #       'endpoint': 'render.html',  # optional; default is render.json
+      #       'splash_url': 'http://127.0.0.1:8050',      # optional; overrides SPLASH_URL
+      #       'slot_policy': scrapy_splash.SlotPolicy.PER_DOMAIN,
+      #       'splash_headers': {},       # optional; a dict with headers sent to Splash
+      #       'dont_process_response': True, # optional, default is False
+      #       'dont_send_headers': True,  # optional, default is False
+      #       'magic_response': False,    # optional, default is True
+      #   }
+      # }) 
+  def req_page(self, url, callback):
+    a = 1
+    b = 1
+    return scrapy_splash.SplashRequest(url, callback, args={
+            # optional; parameters passed to Splash HTTP API
+            'wait': 0.5,
+            'lua_source': script,
+
+            # 'url' is prefilled from request url
+            # 'http_method' is set to 'POST' for POST requests
+            # 'body' is set to request body for POST requests
+        },
+        endpoint='execute', # optional; default is render.html
+        splash_url='http://127.0.0.1:8050' ,     # optional; overrides SPLASH_URL
+        slot_policy=scrapy_splash.SlotPolicy.PER_DOMAIN,  # optional
+      )
+
+  def parse_space(self, response):
     # 首页左侧列表
     spaceList = response.css('.space-name')
     for space in spaceList:
       url = self.base_url + space.css('::attr(href)')[0].extract()
-      yield scrapy.Request(url=url, callback=self.sub_space, cookies=self.cookies)
+      self.req_page(url, self.sub_space)
 
   # 拼接获取子菜单 ajax 请求
   def sub_space(self, response):
-    parsed = urlparse.urlparse(response.request.url)
-    pageId = urlparse.parse_qs(parsed.query)['pageId'][0]
-    url = self.base_url + self.sub_url + '&pageId=' + pageId + '&ancestors=' + pageId + '&_=' + str((int(round(time.time() * 1000))))
-    yield scrapy.Request(url=url, callback=self.sub_ajax_menu, cookies=self.cookies)
+    parsed = urllib.parse.urlparse(response.url)
+    pageId = urllib.parse.parse_qs(parsed.query)['pageId'][0]
+    treePageId = pageId #urllib.parse.parse_qs(parsed.query)['pageId'][0]
+    url = self.base_url + self.sub_url + '&pageId=' + pageId + '&treePageId=' + treePageId + '&_=' + str((int(round(time.time() * 1000))))
+    yield self.req_page(url, self.sub_ajax_menu)
 
   def sub_ajax_menu(self, response):
     li_list = response.css('li')
@@ -72,29 +136,29 @@ class confluenceSpider(scrapy.Spider):
       url = self.base_url + href
     
       logging.info('yield url: ' + url)
-      yield scrapy.Request(url=url, callback=self.parse_page, cookies=self.cookies)
+      yield self.req_page(url, self.parse_page)
       
       # 是否有子菜单
       if (len(li.css('.no-children.icon')) == 0):
         if ('pageId' in href):
-          parsed = urlparse.urlparse(href)
+          parsed = urllib.parse.urlparse(href)
           
           logging.info('parse sub menu, href: ' + href)
 
-          pageId = urlparse.parse_qs(parsed.query)['pageId'][0]
+          pageId = urllib.parse.parse_qs(parsed.query)['pageId'][0]
           sub_url = self.base_url + self.sub_url + '&pageId=' + pageId + '&_=' + str((int(round(time.time() * 1000))))
 
           logging.info('yield url: ' + sub_url)
-          yield scrapy.Request(url=sub_url, callback=self.sub_ajax_menu, cookies=self.cookies)
+          yield self.req_page(sub_url, self.sub_ajax_menu)
         else:
           urlx = self.base_url + href
-          yield scrapy.Request(url=urlx, callback=self.sub_space, cookies=self.cookies)
+          yield self.req_page(urlx, self.sub_space)
 
       
   # 处理页面内容
   def parse_page(self, response):
     content_selector = content = response.css('div#content div.wiki-content')
-    title = response.css('span#title-text a::text')[0].extract()
+    title = response.css('#title-text a::text')[0].extract()
     bread_crumbs = response.css('ol#breadcrumbs a::text').extract()
     content = content_selector[0].extract()
 
@@ -110,14 +174,21 @@ class confluenceSpider(scrapy.Spider):
       src = img.css('::attr(src)')[0].extract()
       img_name = title + str(i) + '.png'
       # content = content.decode('utf-8').replace(src.decode('utf-8'), img_name).encode('utf-8')
-      content = content.replace(src.decode('utf-8'), img_name)
+      content = content.replace(src, img_name)
       i += 1
 
       img_url = self.base_url + src
-      yield scrapy.Request(url=img_url, callback=self.parse_img, cookies=self.cookies, meta={
+      yield scrapy_splash.SplashRequest(url=img_url, callback=self.parse_img, args={
+        'wait': 0.1,
+        'lua_source': script_img,
+      }, meta={
         'img_name': img_name,
         'path': path
-      })
+      },
+      endpoint='execute', # optional; default is render.html
+      splash_url='http://127.0.0.1:8050' ,     # optional; overrides SPLASH_URL
+      slot_policy=scrapy_splash.SlotPolicy.PER_DOMAIN,  # optional
+      )
 
     item = ConfluenceItem()
     item['name'] = title
@@ -130,7 +201,7 @@ class confluenceSpider(scrapy.Spider):
     item = ImgItem()
     item['name'] = response.meta['img_name']
     item['path'] = response.meta['path']
-    item['content'] = response.body
+    item['content'] = response.data['png']
 
     yield item
 
